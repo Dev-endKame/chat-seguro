@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat Seguro</title>
+</head>
+<body>
+  <h1>🔒 Chat Seguro</h1>
+
+  <!-- Tela 1: digitar o código -->
+  <div id="entrada">
+    <input type="text" id="codigo" placeholder="Código de 8 caracteres" maxlength="8">
+    <button onclick="entrar()">Entrar</button>
+  </div>
+
+  <!-- Tela 2: a conversa (começa escondida) -->
+  <div id="chat" style="display:none">
+    <div id="mensagens"></div>
+    <input type="text" id="texto" placeholder="Sua mensagem...">
+    <button onclick="enviar()">Enviar</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io(); // conecta no servidor
+
+    function entrar() {
+      const codigo = document.getElementById('codigo').value;
+      if (codigo.length !== 8) {
+        alert('O código precisa ter 8 caracteres!');
+        return;
+      }
+      socket.emit('entrar', codigo);
+      document.getElementById('entrada').style.display = 'none';
+      document.getElementById('chat').style.display = 'block';
+    }
+
+    function enviar() {
+      const campo = document.getElementById('texto');
+      if (campo.value.trim() === '') return;
+      socket.emit('mensagem', campo.value);
+      campo.value = '';
+    }
+
+    // Quando chega uma mensagem, mostra na tela
+    socket.on('mensagem', (texto) => {
+      document.getElementById('mensagens').innerHTML += '<p>' + texto + '</p>';
+    });
+
+    // Aviso de quem entrou/saiu
+    socket.on('aviso', (texto) => {
+      document.getElementById('mensagens').innerHTML += '<p><em>' + texto + '</em></p>';
+    });
+  </script>
+</body>
+</html>
