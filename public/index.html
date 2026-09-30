@@ -2,61 +2,159 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Chat Seguro</title>
 </head>
 <body>
-  <h1>🔒 Chat Seguro</h1>
+  <h1>🔒 Discordia</h1>
 
-  <!-- Tela 1: digitar o código -->
-  <div id="entrada">
-    <input type="text" id="codigo" placeholder="Código de 8 caracteres" maxlength="8">
-    <button onclick="entrar()">Entrar</button>
+  <!-- Tela inicial -->
+  <div id="telaInicial">
+    <fieldset>
+      <legend>Criar sala</legend>
+      <input id="apelidoCriar" maxlength="20" placeholder="Seu apelido">
+      <select id="limiteUsos">
+        <option value="2">2 entradas</option>
+        <option value="3">3 entradas</option>
+        <option value="5" selected>5 entradas</option>
+        <option value="10">10 entradas</option>
+        <option value="20">20 entradas</option>
+        <option value="50">50 entradas</option>
+      </select>
+      <button onclick="criarSala()">Criar sala</button>
+    </fieldset>
+    <fieldset>
+      <legend>Entrar em uma sala</legend>
+      <input id="codigoEntrar" maxlength="22" placeholder="Código da sala (22 caracteres)" size="30">
+      <input id="apelidoEntrar" maxlength="20" placeholder="Seu apelido">
+      <button onclick="entrarSala()">Entrar</button>
+    </fieldset>
   </div>
 
-  <!-- Tela 2: a conversa (começa escondida) -->
-  <div id="chat" style="display:none">
+  <!-- Tela do código (após criar a sala) -->
+  <div id="telaCodigo" style="display:none">
+    <p>✅ Sala criada! Compartilhe este código (válido por 30s até você entrar):</p>
+    <p><code id="codigoGerado" style="font-size:1.3em"></code></p>
+    <button onclick="copiarCodigo()">📋 Copiar código</button>
+    <button onclick="irParaChat()">Entrar no chat →</button>
+  </div>
+
+  <!-- Tela do chat -->
+  <div id="telaChat" style="display:none">
+    <h3>Membros</h3>
+    <ul id="listaMembros"></ul>
     <div id="mensagens"></div>
-    <input type="text" id="texto" placeholder="Sua mensagem...">
+    <input id="texto" maxlength="1000" placeholder="Sua mensagem...">
     <button onclick="enviar()">Enviar</button>
+    <button onclick="sair()">Sair da sala</button>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io(); // conecta no servidor
+    let socket = null;
+    let eu = null; // { codigo, memberId, token, isPilar, apelido }
+    let membros = new Map();
 
-    function entrar() {
-      const codigo = document.getElementById('codigo').value;
-      if (codigo.length !== 8) {
-        alert('O código precisa ter 8 caracteres!');
-        return;
+    function mostrar(id) {
+      ['telaInicial', 'telaCodigo', 'telaChat'].forEach(t => {
+        document.getElementById(t).style.display = (t === id) ? 'block' : 'none';
+      });
+    }
+
+    async function criarSala() {
+      const apelido = document.getElementById('apelidoCriar').value.trim();
+      const limiteUsos = Number(document.getElementById('limiteUsos').value);
+      const resp = await fetch('/api/salas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apelido, limiteUsos })
+      });
+      const dados = await resp.json();
+      if (!resp.ok) { alert(dados.erro || 'Erro ao criar sala'); return; }
+      eu = { codigo: dados.codigo, memberId: dados.memberId, token: dados.token, isPilar: true, apelido };
+      localStorage.setItem('chatseguro:' + dados.codigo, dados.token);
+      document.getElementById('codigoGerado').textContent = dados.codigo;
+      mostrar('telaCodigo');
+    }
+
+    function copiarCodigo() {
+      navigator.clipboard.writeText(eu.codigo).then(() => alert('Código copiado!'));
+    }
+
+    function entrarSala() {
+      const codigo = document.getElementById('codigoEntrar').value.trim();
+      const apelido = document.getElementById('apelidoEntrar').value.trim();
+      conectar(codigo, apelido);
+    }
+
+    function irParaChat() { conectar(eu.codigo, eu.apelido); }
+
+    function conectar(codigo, apelido) {
+      if (socket) socket.disconnect();
+      socket = io();
+      const token = localStorage.getItem('chatseguro:' + codigo) || undefined;
+
+      socket.on('connect', () => {
+        socket.emit('entrar', { codigo, apelido, token });
+      });
+
+      socket.on('entrou', (dados) => {
+        eu = { codigo, memberId: dados.memberId, token: dados.token, isPilar: dados.isPilar, apelido };
+        localStorage.setItem('chatseguro:' + codigo, dados.token);
+        membros = new Map(dados.membros.map(m => [m.memberId, m]));
+        renderizarMembros();
+        mostrar('telaChat');
+      });
+
+      socket.on('mensagem', (m) => {
+        const p = document.createElement('p');
+        const hora = new Date(m.ts).toLocaleTimeString();
+        p.textContent = `[${hora}] ${m.apelido}: ${m.texto}`;
+        document.getElementById('mensagens').appendChild(p);
+      });
+
+      socket.on('membro_entrou', (m) => { membros.set(m.memberId, { apelido: m.apelido }); renderizarMembros(); });
+      socket.on('membro_saiu', (m) => { membros.delete(m.memberId); renderizarMembros(); });
+
+      socket.on('expulso', () => { alert('Você foi expulso da sala.'); sairLimpo(); });
+      socket.on('sala_encerrada', (d) => { alert('Sala encerrada: ' + (d && d.motivo ? d.motivo : 'fim')); sairLimpo(); });
+      socket.on('erro', (e) => alert((e && e.motivo) || 'Erro.'));
+    }
+
+    function renderizarMembros() {
+      const ul = document.getElementById('listaMembros');
+      ul.textContent = '';
+      for (const [id, m] of membros) {
+        const li = document.createElement('li');
+        let rotulo = m.apelido;
+        if (m.pilar) rotulo += ' 👑';
+        if (eu && id === eu.memberId) rotulo += ' (você)';
+        li.textContent = rotulo;
+        if (eu && eu.isPilar && id !== eu.memberId) {
+          const btn = document.createElement('button');
+          btn.textContent = 'Expulsar';
+          btn.onclick = () => socket.emit('expulsar_membro', { memberId: id });
+          li.appendChild(document.createTextNode(' '));
+          li.appendChild(btn);
+        }
+        ul.appendChild(li);
       }
-      socket.emit('entrar', codigo);
-      document.getElementById('entrada').style.display = 'none';
-      document.getElementById('chat').style.display = 'block';
     }
 
     function enviar() {
       const campo = document.getElementById('texto');
-      if (campo.value.trim() === '') return;
-      socket.emit('mensagem', campo.value);
+      if (!socket || campo.value.trim() === '') return;
+      socket.emit('enviar_mensagem', { texto: campo.value });
       campo.value = '';
     }
 
-    // Quando chega uma mensagem, mostra na tela (sem risco de XSS)
-    socket.on('mensagem', (texto) => {
-    const p = document.createElement('p');
-    p.textContent = texto; // textContent ESCAPA o HTML automaticamente
-    document.getElementById('mensagens').appendChild(p);
-    });
-
-    // Aviso de quem entrou/saiu
-    socket.on('aviso', (texto) => {
-    const p = document.createElement('p');
-    const em = document.createElement('em');
-    em.textContent = texto;
-    p.appendChild(em);
-    document.getElementById('mensagens').appendChild(p);
-    });
+    function sair() { sairLimpo(); }
+    function sairLimpo() {
+      if (socket) { socket.disconnect(); socket = null; }
+      eu = null;
+      membros = new Map();
+      mostrar('telaInicial');
+    }
   </script>
 </body>
 </html>
