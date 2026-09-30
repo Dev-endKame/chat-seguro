@@ -42,14 +42,20 @@
       campo.value = '';
     }
 
-    // Quando chega uma mensagem, mostra na tela
+    // Quando chega uma mensagem, mostra na tela (sem risco de XSS)
     socket.on('mensagem', (texto) => {
-      document.getElementById('mensagens').innerHTML += '<p>' + texto + '</p>';
+    const p = document.createElement('p');
+    p.textContent = texto; // textContent ESCAPA o HTML automaticamente
+    document.getElementById('mensagens').appendChild(p);
     });
 
     // Aviso de quem entrou/saiu
     socket.on('aviso', (texto) => {
-      document.getElementById('mensagens').innerHTML += '<p><em>' + texto + '</em></p>';
+    const p = document.createElement('p');
+    const em = document.createElement('em');
+    em.textContent = texto;
+    p.appendChild(em);
+    document.getElementById('mensagens').appendChild(p);
     });
   </script>
 </body>
