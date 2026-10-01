@@ -1,41 +1,94 @@
 const express = require('express');
 const http = require('http');
 const crypto = require('crypto');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 
 const app = express();
+
+// ===== FASE 2: TRUST PROXY (o Render fica atrás de proxy) =====
+app.set('trust proxy', 1);
+
+// ===== FASE 2: HELMET + CSP ESTRITA =====
+// script-src 'self' => proíbe JS inline (por isso app.js é arquivo separado)
+// connect-src 'self' wss: => permite o WebSocket na mesma origem
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", 'wss:'],
+      styleSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:'],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"]
+    }
+  }
+}));
+
 app.use(express.json());
 app.use(express.static('public'));
 
 const server = http.createServer(app);
-const io = new Server(server);
 
-// ===== CONSTANTES (limites do roadmap v2) =====
+// ===== FASE 2: ORIGENS PERMITIDAS (separadas por vírgula na env var) =====
+const ORIGENS_PERMITIDAS = (process.env.ORIGENS_PERMITIDAS || 'http://localhost:3000')
+  .split(',')
+  .map(o => o.trim());
+
+// ===== FASE 2: PAYLOAD MÁXIMO 8 KB POR PACOTE =====
+const io = new Server(server, {
+  maxHttpBufferSize: 8 * 1024
+});
+
+// ===== FASE 2: CHECAGEM DE ORIGEM NO HANDSHAKE =====
+// CORS sozinho não bloqueia cliente fora do navegador; aqui exigimos o header Origin.
+io.use((socket, next) => {
+  const origin = socket.handshake.headers.origin;
+  if (origin && ORIGENS_PERMITIDAS.includes(origin)) return next();
+  return next(new Error('origem_negada'));
+});
+
+// ===== FASE 2: ESTADO POR CONEXÃO (rate limit de mensagens) =====
+io.use((socket, next) => {
+  socket.data.ultimaMsg = 0;
+  next();
+});
+
+// ===== CONSTANTES =====
 const MAX_SALAS = 500;
 const MAX_MEMBROS = 50;
-const TOLERANCIA_PILAR_MS = 20000;      // 20s de tolerância se o Pilar cair
-const TOLERANCIA_CONEXAO_MS = 30000;    // 30s pro Pilar conectar o socket após criar
+const TOLERANCIA_PILAR_MS = 20000;
+const TOLERANCIA_CONEXAO_MS = 30000;
+const INTERVALO_MSG_MS = 500;
+const TENTATIVAS_ENTRAR_MAX = 10;
+const JANELA_TENTATIVAS_MS = 60000;
 
-// ===== ESTADO EM MEMÓRIA (zero banco de dados) =====
-const salas = new Map(); // codigo -> sala
+// ===== ESTADO EM MEMÓRIA =====
+const salas = new Map();
 
-// sala = {
-//   codigo, criadaEm, ultimaAtividade,
-//   limiteUsos, usosTotal, pilarId,
-//   timerPilar: null, timerConexao: null,
-//   membros: Map(memberId -> { apelido, token, socketId|null })
-// }
+// ===== FASE 2: ANTI-ADIVINHAÇÃO DE CÓDIGO POR IP =====
+const tentativasEntrarPorIp = new Map(); // ip -> [timestamps]
+
+function ipDoSocket(socket) {
+  const fwd = socket.handshake.headers['x-forwarded-for'];
+  return fwd ? fwd.split(',')[0].trim() : socket.handshake.address;
+}
+
+setInterval(() => {
+  const agora = Date.now();
+  for (const [ip, ts] of tentativasEntrarPorIp) {
+    const recentes = ts.filter(t => agora - t < JANELA_TENTATIVAS_MS);
+    if (recentes.length === 0) tentativasEntrarPorIp.delete(ip);
+    else tentativasEntrarPorIp.set(ip, recentes);
+  }
+}, 5 * 60000).unref();
 
 // ===== HELPERS =====
-function gerarCodigo() {
-  return crypto.randomBytes(16).toString('base64url'); // 128 bits, 22 caracteres
-}
-function gerarMemberId() {
-  return crypto.randomBytes(16).toString('hex'); // 32 hex
-}
-function gerarToken() {
-  return crypto.randomBytes(32).toString('hex'); // 64 hex
-}
+function gerarCodigo() { return crypto.randomBytes(16).toString('base64url'); }
+function gerarMemberId() { return crypto.randomBytes(16).toString('hex'); }
+function gerarToken() { return crypto.randomBytes(32).toString('hex'); }
 
 const RE_CODIGO = /^[A-Za-z0-9_-]{22}$/;
 const RE_TOKEN = /^[a-f0-9]{64}$/;
@@ -55,8 +108,7 @@ function listaMembros(sala) {
   return lista;
 }
 
-// Wrapper: qualquer payload malformado é descartado SEM crashar o servidor
-const seguro = (fn) => (...args) => { try { fn(...args); } catch { /* descarta */ } };
+const seguro = (fn) => (...args) => { try { fn(...args); } catch { /* descarta payload malformado */ } };
 
 // ===== DESTRUIÇÃO DE SALA =====
 function destruirSala(codigo, motivo) {
@@ -76,7 +128,17 @@ function destruirSala(codigo, motivo) {
   console.log(`[evento] sala destruída: ${codigo} (${motivo})`);
 }
 
-// ===== FASE 1: CRIAÇÃO DE SALA VIA HTTP =====
+// ===== FASE 2: RATE LIMIT HTTP (criação de salas: 5/min por IP) =====
+const criarSalaLimiter = rateLimit({
+  windowMs: 60000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: 'Muitas tentativas de criação. Aguarde um minuto.' }
+});
+app.use('/api/salas', criarSalaLimiter);
+
+// ===== CRIAÇÃO DE SALA VIA HTTP =====
 app.post('/api/salas', (req, res) => {
   if (salas.size >= MAX_SALAS) {
     return res.status(503).json({ erro: 'Servidor cheio. Tente mais tarde.' });
@@ -108,7 +170,6 @@ app.post('/api/salas', (req, res) => {
   };
   salas.set(codigo, sala);
 
-  // Se o Pilar não conectar pelo socket em 30s, a sala morre
   sala.timerConexao = setTimeout(() => {
     const s = salas.get(codigo);
     if (s) {
@@ -121,7 +182,7 @@ app.post('/api/salas', (req, res) => {
   res.status(201).json({ codigo, memberId, token });
 });
 
-// ===== SOCKET.IO: ENTRAR, MENSAGEM, EXPULSAR, SAIR =====
+// ===== SOCKET.IO =====
 io.on('connection', (socket) => {
   let sessao = null; // { codigo, memberId }
 
@@ -135,6 +196,16 @@ io.on('connection', (socket) => {
     if (!apelidoValido(apelido)) {
       return socket.emit('erro', { motivo: 'Apelido inválido (1 a 20 caracteres).' });
     }
+
+    // ===== FASE 2: anti-adivinhação de código por IP =====
+    const ip = ipDoSocket(socket);
+    const agoraTs = Date.now();
+    const recentes = (tentativasEntrarPorIp.get(ip) || []).filter(t => agoraTs - t < JANELA_TENTATIVAS_MS);
+    if (recentes.length >= TENTATIVAS_ENTRAR_MAX) {
+      return socket.emit('erro', { motivo: 'Muitas tentativas. Aguarde um minuto.' });
+    }
+    recentes.push(agoraTs);
+    tentativasEntrarPorIp.set(ip, recentes);
 
     const sala = salas.get(codigo);
     if (!sala) return socket.emit('erro', { motivo: 'Sala inexistente ou encerrada.' });
@@ -198,13 +269,19 @@ io.on('connection', (socket) => {
     const { texto } = (payload && typeof payload === 'object') ? payload : {};
     if (!textoValido(texto)) return socket.emit('erro', { motivo: 'Mensagem inválida.' });
 
+    // ===== FASE 2: rate limit de mensagens (mínimo 500ms entre envios) =====
+    const agora = Date.now();
+    if (agora - socket.data.ultimaMsg < INTERVALO_MSG_MS) {
+      return socket.emit('erro', { motivo: 'Muito rápido. Aguarde um instante.' });
+    }
+    socket.data.ultimaMsg = agora;
+
     const sala = salas.get(sessao.codigo);
     if (!sala) return;
     const membro = sala.membros.get(sessao.memberId);
-    if (!membro || membro.socketId !== socket.id) return; // só repassa se o socket pertence à sala
+    if (!membro || membro.socketId !== socket.id) return;
 
     sala.ultimaAtividade = Date.now();
-    // O SERVIDOR monta a identidade: nunca confia no que o cliente diz sobre quem ele é
     io.to(sessao.codigo).emit('mensagem', {
       de: sessao.memberId,
       apelido: membro.apelido,
@@ -241,7 +318,7 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('sair', seguro(() => {
-    socket.disconnect(true); // o handler de disconnect cuida do resto
+    socket.disconnect(true);
   }));
 
   socket.on('disconnect', () => {
@@ -255,7 +332,6 @@ io.on('connection', (socket) => {
     sala.ultimaAtividade = Date.now();
 
     if (sessao.memberId === sala.pilarId) {
-      // Pilar caiu: tolerância de 20s pra ele voltar com o token
       sala.timerPilar = setTimeout(() => {
         const s = salas.get(sessao.codigo);
         if (!s) return;

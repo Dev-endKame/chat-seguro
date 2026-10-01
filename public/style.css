@@ -1,0 +1,22 @@
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 640px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+.hidden { display: none !important; }
+fieldset { margin-bottom: 1rem; }
+button { cursor: pointer; }
+code {
+  background: #f0f0f0;
+  padding: .3rem .6rem;
+  font-size: 1.3em;
+}
+#mensagens {
+  border: 1px solid #ccc;
+  min-height: 200px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: .5rem;
+  margin: 1rem 0;
+}
