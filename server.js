@@ -35,7 +35,7 @@ const server = http.createServer(app);
 // ===== FASE 2: ORIGENS PERMITIDAS (separadas por vírgula na env var) =====
 const ORIGENS_PERMITIDAS = (process.env.ORIGENS_PERMITIDAS || 'http://localhost:3000')
   .split(',')
-  .map(o => o.trim());
+  .map(o => o.trim().toLowerCase());
 
 // ===== FASE 2: PAYLOAD MÁXIMO 8 KB POR PACOTE =====
 const io = new Server(server, {
@@ -46,7 +46,7 @@ const io = new Server(server, {
 // CORS sozinho não bloqueia cliente fora do navegador; aqui exigimos o header Origin.
 io.use((socket, next) => {
   const origin = socket.handshake.headers.origin;
-  if (origin && ORIGENS_PERMITIDAS.includes(origin)) return next();
+  if (origin && ORIGENS_PERMITIDAS.includes(origin.toLowerCase())) return next();
   return next(new Error('origem_negada'));
 });
 
