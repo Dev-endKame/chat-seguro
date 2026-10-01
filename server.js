@@ -33,7 +33,7 @@ app.use(express.static('public'));
 const server = http.createServer(app);
 
 // ===== FASE 2: ORIGENS PERMITIDAS (separadas por vírgula na env var) =====
-const ORIGENS_PERMITIDAS = (process.env.ORIGENS_PERMITIDAS || 'http://localhost:3000')
+const ORIGENS_PERMITIDAS = (process.env.ORIGENS_PERMITIDAS || 'https://chat-seguro-7nmi.onrender.com,http://localhost:3000')
   .split(',')
   .map(o => o.trim().toLowerCase());
 
