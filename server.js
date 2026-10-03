@@ -37,7 +37,6 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.static('public'));
 
-
 const server = http.createServer(app);
 
 // ===== FASE 2: ORIGENS PERMITIDAS (separadas por vírgula na env var) =====
@@ -47,17 +46,13 @@ const ORIGENS_PERMITIDAS = (process.env.ORIGENS_PERMITIDAS || 'https://chat-segu
 
 // ===== FASE 2: PAYLOAD MÁXIMO 8 KB POR PACOTE =====
 const io = new Server(server, {
-  maxHttpBufferSize: 8 * 1024,
+  maxHttpBufferSize: 8192,
   cors: { origin: ORIGENS_PERMITIDAS }
 });
 
 // ===== FASE 2: CHECAGEM DE ORIGEM NO HANDSHAKE =====
-// CORS sozinho não bloqueia cliente fora do navegador; aqui exigimos o header Origin.
-
 io.use((socket, next) => {
   const origin = socket.handshake.headers.origin;
-  // Navegador NÃO envia Origin em GET same-origin (início do polling).
-  // Só rejeitamos quando o header VEM e não está na lista (site malicioso de terceiro).
   if (!origin || ORIGENS_PERMITIDAS.includes(origin.toLowerCase())) return next();
   console.log(`[segurança] origem rejeitada: "${origin}"`);
   return next(new Error('origem_negada'));
@@ -77,9 +72,8 @@ const TOLERANCIA_CONEXAO_MS = 30000;
 const INTERVALO_MSG_MS = 500;
 const TENTATIVAS_ENTRAR_MAX = 10;
 const JANELA_TENTATIVAS_MS = 60000;
-// Dá pra sobrescrever com env var pra testes (valores em milissegundos)
-const INATIVIDADE_MAX_MS = Number(process.env.INATIVIDADE_MAX_MS) || 30 * 60000; // 30 min parada
-const IDADE_MAX_MS = Number(process.env.IDADE_MAX_MS) || 6 * 3600000;            // 6h de vida total
+const INATIVIDADE_MAX_MS = Number(process.env.INATIVIDADE_MAX_MS) || 30 * 60000; // 30 min
+const IDADE_MAX_MS = Number(process.env.IDADE_MAX_MS) || 6 * 3600000;           // 6h
 
 // ===== ESTADO EM MEMÓRIA =====
 const salas = new Map();
@@ -108,18 +102,23 @@ function gerarToken() { return crypto.randomBytes(32).toString('hex'); }
 
 const RE_CODIGO = /^[A-Za-z0-9_-]{22}$/;
 const RE_TOKEN = /^[a-f0-9]{64}$/;
+const RE_CHAVE_PUBLICA = /^[A-Za-z0-9\-_+/=]{60,140}$/;
+const RE_BASE64 = /^[A-Za-z0-9\-_+/=]+$/;
 const RE_CONTROLE = /[\x00-\x1f\x7f]/;
 
 function apelidoValido(a) {
   return typeof a === 'string' && a.length >= 1 && a.length <= 20 && !RE_CONTROLE.test(a);
 }
-function textoValido(t) {
-  return typeof t === 'string' && t.length >= 1 && t.length <= 1000;
-}
+
 function listaMembros(sala) {
   const lista = [];
   for (const [memberId, m] of sala.membros) {
-    lista.push({ memberId, apelido: m.apelido, pilar: memberId === sala.pilarId });
+    lista.push({
+      memberId,
+      apelido: m.apelido,
+      pilar: memberId === sala.pilarId,
+      chavePublica: m.chavePublica || null
+    });
   }
   return lista;
 }
@@ -194,7 +193,7 @@ app.post('/api/salas', (req, res) => {
     pilarId: memberId,
     timerPilar: null,
     timerConexao: null,
-    membros: new Map([[memberId, { apelido, token, socketId: null }]])
+    membros: new Map([[memberId, { apelido, token, socketId: null, chavePublica: null }]])
   };
   salas.set(codigo, sala);
 
@@ -217,7 +216,7 @@ io.on('connection', (socket) => {
   socket.on('entrar', seguro((payload) => {
     if (sessao) return socket.emit('erro', { motivo: 'Conexão já está em uma sala.' });
 
-    const { codigo, apelido, token } = (payload && typeof payload === 'object') ? payload : {};
+    const { codigo, apelido, token, chavePublica } = (payload && typeof payload === 'object') ? payload : {};
     if (typeof codigo !== 'string' || !RE_CODIGO.test(codigo)) {
       return socket.emit('erro', { motivo: 'Código inválido.' });
     }
@@ -248,6 +247,9 @@ io.on('connection', (socket) => {
           }
           membro.socketId = socket.id;
           membro.apelido = apelido;
+          if (typeof chavePublica === 'string' && RE_CHAVE_PUBLICA.test(chavePublica)) {
+            membro.chavePublica = chavePublica;
+          }
           socket.join(codigo);
           sessao = { codigo, memberId: mid };
           sala.ultimaAtividade = Date.now();
@@ -262,6 +264,7 @@ io.on('connection', (socket) => {
             membros: listaMembros(sala)
           });
           socket.to(codigo).emit('membro_entrou', { memberId: mid, apelido });
+          socket.to(codigo).emit('chave_publica', { memberId: mid, chavePublica: membro.chavePublica });
           return;
         }
       }
@@ -279,7 +282,12 @@ io.on('connection', (socket) => {
     const memberId = gerarMemberId();
     const novoToken = gerarToken();
     sala.usosTotal++;
-    sala.membros.set(memberId, { apelido, token: novoToken, socketId: socket.id });
+    sala.membros.set(memberId, {
+      apelido,
+      token: novoToken,
+      socketId: socket.id,
+      chavePublica: (typeof chavePublica === 'string' && RE_CHAVE_PUBLICA.test(chavePublica)) ? chavePublica : null
+    });
     sala.ultimaAtividade = Date.now();
     socket.join(codigo);
     sessao = { codigo, memberId };
@@ -289,15 +297,28 @@ io.on('connection', (socket) => {
       isPilar: false,
       membros: listaMembros(sala)
     });
-    socket.to(codigo).emit('membro_entrou', { memberId, apelido });
+    socket.to(codigo).emit('membro_entrou', {
+      memberId,
+      apelido,
+      chavePublica: sala.membros.get(memberId).chavePublica
+    });
   }));
 
   socket.on('enviar_mensagem', seguro((payload) => {
     if (!sessao) return;
-    const { texto } = (payload && typeof payload === 'object') ? payload : {};
-    if (!textoValido(texto)) return socket.emit('erro', { motivo: 'Mensagem inválida.' });
+    const { cifrados } = (payload && typeof payload === 'object') ? payload : {};
+    if (!Array.isArray(cifrados) || cifrados.length === 0 || cifrados.length > MAX_MEMBROS) {
+      return socket.emit('erro', { motivo: 'Mensagem inválida.' });
+    }
+    for (const item of cifrados) {
+      const ok = item && typeof item === 'object'
+        && typeof item.para === 'string' && item.para.length <= 64
+        && typeof item.iv === 'string' && RE_BASE64.test(item.iv) && item.iv.length <= 64
+        && typeof item.ct === 'string' && RE_BASE64.test(item.ct) && item.ct.length <= 6000;
+      if (!ok) return socket.emit('erro', { motivo: 'Mensagem inválida.' });
+    }
 
-    // ===== FASE 2: rate limit de mensagens (mínimo 500ms entre envios) =====
+    // rate limit de mensagens (mínimo 500ms entre envios)
     const agora = Date.now();
     if (agora - socket.data.ultimaMsg < INTERVALO_MSG_MS) {
       return socket.emit('erro', { motivo: 'Muito rápido. Aguarde um instante.' });
@@ -310,10 +331,11 @@ io.on('connection', (socket) => {
     if (!membro || membro.socketId !== socket.id) return;
 
     sala.ultimaAtividade = Date.now();
-    io.to(sessao.codigo).emit('mensagem', {
+    // socket.to = NÃO manda de volta pro remetente (ele já exibe localmente)
+    socket.to(sessao.codigo).emit('mensagem', {
       de: sessao.memberId,
       apelido: membro.apelido,
-      texto,
+      cifrados,
       ts: Date.now()
     });
   }));

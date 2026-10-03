@@ -20,6 +20,14 @@
   quando, tamanho das mensagens e IPs. O conteúdo fica oculto; o padrão de
   comunicação, não.
 
+- ### Passo 4.5 — Teste local:
+
+```bash
+# Testa a expiração em 1 minuto (em vez de esperar 30):
+INATIVIDADE_MAX_MS=60000 npm start
+```
+
+
 ## O que cada fase resolve
 
 | Fase | Ameaça que resolve |
