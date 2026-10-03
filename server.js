@@ -39,15 +39,19 @@ const ORIGENS_PERMITIDAS = (process.env.ORIGENS_PERMITIDAS || 'https://chat-segu
 
 // ===== FASE 2: PAYLOAD MÁXIMO 8 KB POR PACOTE =====
 const io = new Server(server, {
-  maxHttpBufferSize: 8 * 1024
+  maxHttpBufferSize: 8 * 1024,
+  cors: { origin: ORIGENS_PERMITIDAS }
 });
 
 // ===== FASE 2: CHECAGEM DE ORIGEM NO HANDSHAKE =====
 // CORS sozinho não bloqueia cliente fora do navegador; aqui exigimos o header Origin.
+
 io.use((socket, next) => {
   const origin = socket.handshake.headers.origin;
-  if (origin && ORIGENS_PERMITIDAS.includes(origin.toLowerCase())) return next();
-  console.log(`[debug] origem rejeitada: "${origin}" | permitidas: [${ORIGENS_PERMITIDAS.join(' | ')}]`);
+  // Navegador NÃO envia Origin em GET same-origin (início do polling).
+  // Só rejeitamos quando o header VEM e não está na lista (site malicioso de terceiro).
+  if (!origin || ORIGENS_PERMITIDAS.includes(origin.toLowerCase())) return next();
+  console.log(`[segurança] origem rejeitada: "${origin}"`);
   return next(new Error('origem_negada'));
 });
 
