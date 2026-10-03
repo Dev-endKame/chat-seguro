@@ -47,6 +47,7 @@ const io = new Server(server, {
 io.use((socket, next) => {
   const origin = socket.handshake.headers.origin;
   if (origin && ORIGENS_PERMITIDAS.includes(origin.toLowerCase())) return next();
+  console.log(`[debug] origem rejeitada: "${origin}" | permitidas: [${ORIGENS_PERMITIDAS.join(' | ')}]`);
   return next(new Error('origem_negada'));
 });
 
