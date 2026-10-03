@@ -27,8 +27,16 @@ app.use(helmet({
   }
 }));
 
+// ===== FASE 3: HTTP -> HTTPS (o Render já termina o TLS; aqui é redundância explícita) =====
+app.use((req, res, next) => {
+  if (req.headers['x-forwarded-proto'] === 'http') {
+    return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
 app.use(express.json());
 app.use(express.static('public'));
+
 
 const server = http.createServer(app);
 
@@ -69,6 +77,9 @@ const TOLERANCIA_CONEXAO_MS = 30000;
 const INTERVALO_MSG_MS = 500;
 const TENTATIVAS_ENTRAR_MAX = 10;
 const JANELA_TENTATIVAS_MS = 60000;
+// Dá pra sobrescrever com env var pra testes (valores em milissegundos)
+const INATIVIDADE_MAX_MS = Number(process.env.INATIVIDADE_MAX_MS) || 30 * 60000; // 30 min parada
+const IDADE_MAX_MS = Number(process.env.IDADE_MAX_MS) || 6 * 3600000;            // 6h de vida total
 
 // ===== ESTADO EM MEMÓRIA =====
 const salas = new Map();
@@ -132,6 +143,18 @@ function destruirSala(codigo, motivo) {
   salas.delete(codigo);
   console.log(`[evento] sala destruída: ${codigo} (${motivo})`);
 }
+
+// ===== FASE 3: VARREDURA DE EXPIRAÇÃO (a cada 60s) =====
+setInterval(() => {
+  const agora = Date.now();
+  for (const [codigo, sala] of salas) {
+    if (agora - sala.ultimaAtividade > INATIVIDADE_MAX_MS) {
+      destruirSala(codigo, 'Sala expirada por inatividade');
+    } else if (agora - sala.criadaEm > IDADE_MAX_MS) {
+      destruirSala(codigo, 'Sala atingiu a idade máxima');
+    }
+  }
+}, 60000).unref();
 
 // ===== FASE 2: RATE LIMIT HTTP (criação de salas: 5/min por IP) =====
 const criarSalaLimiter = rateLimit({
