@@ -96,13 +96,19 @@ async function conectar(codigo, apelido) {
     registrarChave(m.memberId, m.chavePublica);
   });
   socket.on('chave_publica', (m) => registrarChave(m.memberId, m.chavePublica));
-  socket.on('membro_saiu', (m) => {
+    // ===== Chamadas em grupo (WebRTC) =====
+  socket.on('chamada_tocando', (d) => mostrarAvisoChamada(d));
+  socket.on('chamada_participantes', (d) => entrarComParticipantes(d.participantes));
+  socket.on('chamada_novo_participante', (d) => novoParticipante(d.de));
+  socket.on('chamada_participante_saiu', (d) => encerrarPar(d.de));
+  socket.on('chamada_sinal', (d) => tratarSinal(d.de, d.dados));
+  socket.on('membro_saiu', (m) => {encerrarPar(m.memberId);
     membros.delete(m.memberId);
     chavesDeSala.delete(m.memberId);
     renderizarMembros();
   });
 
-  socket.on('expulso', () => { alert('Você foi expulso da sala.'); sairLimpo(); });
+  socket.on('expulso', () => { alert('Você foi expulso da sala.'); sairLimpo();});
   socket.on('sala_encerrada', (d) => { alert('Sala encerrada: ' + (d && d.motivo ? d.motivo : 'fim')); sairLimpo(); });
   socket.on('erro', (e) => alert((e && e.motivo) || 'Erro.'));
   socket.on('connect_error', (e) => alert('Falha na conexão: ' + e.message));
@@ -152,6 +158,7 @@ function sairLimpo() {
   membros = new Map();
   chavesDeSala.clear();
   minhasChaves = null;
+  pararTudoLocal();
   mostrar('telaInicial');
 }
 

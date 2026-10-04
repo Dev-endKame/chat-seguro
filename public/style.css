@@ -20,3 +20,9 @@ code {
   padding: .5rem;
   margin: 1rem 0;
 }
+
+#videos { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+#videos video { width: 240px; max-height: 160px; background: #000; border-radius: 8px; }
+#chamadaAviso { background: #fff3cd; border: 1px solid #ffc107; padding: 8px; border-radius: 8px; margin: 8px 0; }
+#chamadaBarra { background: #d4edda; border: 1px solid #28a745; padding: 8px; border-radius: 8px; margin: 8px 0; }
+.hidden { display: none !important; }

@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Chat Seguro</title>
   <link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
   <h1>🔒 Discordia</h1>
 
@@ -44,6 +46,20 @@
   <div id="telaChat" class="hidden">
     <h3>Membros</h3>
     <ul id="listaMembros"></ul>
+    <div id="chamadaAviso" class="hidden">
+      📞 <span id="chamadaQuem"></span> iniciou uma chamada!
+      <button id="btnEntrarChamada">Entrar</button>
+    </div>
+
+    <div id="chamadaBarra" class="hidden">
+      🔴 Chamada em grupo — <span id="contagemChamada">0</span> participante(s)
+      <button id="btnCompartilhar">🖥️ Compartilhar tela</button>
+      <button id="btnDesligar">Desligar</button>
+    </div>
+
+    <div id="videos"></div>
+
+    <button id="btnLigar">📞 Iniciar chamada em grupo</button>
     <div id="mensagens"></div>
     <input id="texto" maxlength="1000" placeholder="Sua mensagem..." autocomplete="off">
     <button id="btnEnviar">Enviar</button>
@@ -52,6 +68,8 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="crypto.js"></script>
-  <script src="/app.js"></script>
+  <script src="app.js"></script>
+  <script src="chamada.js"></script>
 </body>
+
 </html>

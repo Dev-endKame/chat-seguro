@@ -46,7 +46,7 @@ const ORIGENS_PERMITIDAS = (process.env.ORIGENS_PERMITIDAS || 'https://chat-segu
 
 // ===== FASE 2: PAYLOAD MÁXIMO 8 KB POR PACOTE =====
 const io = new Server(server, {
-  maxHttpBufferSize: 8192,
+    maxHttpBufferSize: 64 * 1024,
   cors: { origin: ORIGENS_PERMITIDAS }
 });
 
@@ -104,7 +104,7 @@ const RE_CODIGO = /^[A-Za-z0-9_-]{22}$/;
 const RE_TOKEN = /^[a-f0-9]{64}$/;
 const RE_CHAVE_PUBLICA = /^[A-Za-z0-9\-_+/=]{60,140}$/;
 const RE_BASE64 = /^[A-Za-z0-9\-_+/=]+$/;
-const RE_DADOS_SINAL = /^[\s\S]{1,10000}$/; // SDP/candidatos ICE chegam como string
+const RE_DADOS_SINAL = /^[\s\S]{1,60000}$/; // SDP/candidatos ICE chegam como string
 const RE_CONTROLE = /[\x00-\x1f\x7f]/;
 
 function apelidoValido(a) {
@@ -173,6 +173,7 @@ app.use('/api/salas', criarSalaLimiter);
 
 // ===== CRIAÇÃO DE SALA VIA HTTP =====
 app.post('/api/salas', (req, res) => {
+  
   if (salas.size >= MAX_SALAS) {
     return res.status(503).json({ erro: 'Servidor cheio. Tente mais tarde.' });
   }
@@ -210,6 +211,8 @@ app.post('/api/salas', (req, res) => {
       if (pilar && !pilar.socketId) destruirSala(codigo, 'Pilar nunca conectou');
     }
   }, TOLERANCIA_CONEXAO_MS);
+
+  emChamada: new Set(),
 
   console.log(`[evento] sala criada: ${codigo}`);
   res.status(201).json({ codigo, memberId, token });
@@ -360,19 +363,41 @@ io.on('connection', (socket) => {
     s.emit('chamada_tocando', { de: sessao.memberId, apelido: membroApelido(sala, sessao.memberId), comVideo: !!comVideo });
   }));
 
-  // ===== WEBRTC: SINALIZAÇÃO (offer/answer/ICE — só repassa, não entende) =====
-  socket.on('chamada_sinal', seguro((payload) => {
+  // ===== WEBRTC: INICIAR CHAMADA EM GRUPO (toca o sino pra sala) =====
+  socket.on('chamada_iniciar', seguro((payload) => {
     if (!sessao) return;
-    const { para, dados } = (payload && typeof payload === 'object') ? payload : {};
-    if (typeof para !== 'string' || para.length > 64) return;
-    if (typeof dados !== 'string' || !RE_DADOS_SINAL.test(dados)) return;
+    const { comVideo } = (payload && typeof payload === 'object') ? payload : {};
     const sala = salas.get(sessao.codigo);
     if (!sala) return;
-    const alvo = sala.membros.get(para);
-    if (!alvo || !alvo.socketId) return;
-    const s = io.sockets.sockets.get(alvo.socketId);
-    if (!s) return;
-    s.emit('chamada_sinal', { de: sessao.memberId, dados });
+    sala.emChamada.add(sessao.memberId);
+    sala.ultimaAtividade = Date.now();
+    socket.to(sessao.codigo).emit('chamada_tocando', {
+      de: sessao.memberId,
+      apelido: membroApelido(sala, sessao.memberId),
+      comVideo: !!comVideo
+    });
+  }));
+
+  // ===== WEBRTC: ENTRAR NA CHAMADA =====
+  socket.on('chamada_entrar', seguro(() => {
+    if (!sessao) return;
+    const sala = salas.get(sessao.codigo);
+    if (!sala) return;
+    const jaEstavam = [...sala.emChamada].filter(id => id !== sessao.memberId);
+    sala.emChamada.add(sessao.memberId);
+    sala.ultimaAtividade = Date.now();
+    socket.emit('chamada_participantes', { participantes: jaEstavam });
+    socket.to(sessao.codigo).emit('chamada_novo_participante', { de: sessao.memberId });
+  }));
+
+  // ===== WEBRTC: SAIR DA CHAMADA (fica na sala, só desliga) =====
+  socket.on('chamada_sair', seguro(() => {
+    if (!sessao) return;
+    const sala = salas.get(sessao.codigo);
+    if (!sala) return;
+    if (!sala.emChamada.delete(sessao.memberId)) return;
+    sala.ultimaAtividade = Date.now();
+    socket.to(sessao.codigo).emit('chamada_participante_saiu', { de: sessao.memberId });
   }));
 
   socket.on('expulsar_membro', seguro((payload) => {
@@ -414,6 +439,12 @@ io.on('connection', (socket) => {
     if (!membro || membro.socketId !== socket.id) return;
 
     membro.socketId = null;
+
+    if (sala.emChamada.has(sessao.memberId)) {
+      sala.emChamada.delete(sessao.memberId);
+      socket.to(sessao.codigo).emit('chamada_participante_saiu', { de: sessao.memberId });
+    }
+
     sala.ultimaAtividade = Date.now();
 
     if (sessao.memberId === sala.pilarId) {
