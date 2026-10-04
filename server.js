@@ -129,7 +129,7 @@ function membroApelido(sala, memberId) {
   return m ? m.apelido : 'alguém';
 }
 
-const seguro = (fn) => (...args) => { try { fn(...args); } catch { /* descarta payload malformado */ } };
+const seguro = (fn) => (...args) => { try { fn(...args); } catch (e) { console.error('[erro handler]', e.message); } };
 
 // ===== DESTRUIÇÃO DE SALA =====
 function destruirSala(codigo, motivo) {
@@ -200,6 +200,7 @@ app.post('/api/salas', (req, res) => {
     pilarId: memberId,
     timerPilar: null,
     timerConexao: null,
+    emChamada: new Set(),        // ✅ agora DENTRO do objeto
     membros: new Map([[memberId, { apelido, token, socketId: null, chavePublica: null }]])
   };
   salas.set(codigo, sala);
