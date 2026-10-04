@@ -62,22 +62,36 @@ function encerrarPar(memberId) {
   if (!par) return;
   try { par.pc.close(); } catch (e) {}
   pares.delete(memberId);
-  const v = document.getElementById('video-' + memberId);
-  if (v) v.remove();
+  const box = document.getElementById('videobox-' + memberId);
+  if (box) box.remove();
   atualizarChamadaUI();
 }
 
 function anexarMidiaRemota(memberId, stream) {
-  let v = document.getElementById('video-' + memberId);
-  if (!v) {
-    v = document.createElement('video');
+  let box = document.getElementById('videobox-' + memberId);
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'videobox-' + memberId;
+    box.className = 'videobox';
+    const rotulo = document.createElement('span');
+    rotulo.textContent = apelidoDe(memberId);
+    box.appendChild(rotulo);
+    const v = document.createElement('video');
     v.id = 'video-' + memberId;
     v.autoplay = true;
     v.playsInline = true;
-    v.title = apelidoDe(memberId);
-    document.getElementById('videos').appendChild(v);
+    v.controls = true; // player visível: garante áudio em celular e permite ajustar volume
+    // clique duplo = tela cheia (com fallback pro Safari/iOS)
+    v.addEventListener('dblclick', () => {
+      if (v.requestFullscreen) v.requestFullscreen();
+      else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+    });
+    box.appendChild(v);
+    document.getElementById('videos').appendChild(box);
   }
+  const v = document.getElementById('video-' + memberId);
   v.srcObject = stream;
+  v.play().catch(() => {}); // destrava autoplay em navegadores de celular
 }
 
 // ----- Sinalização (padrão "perfect negotiation", anti-colisão) -----

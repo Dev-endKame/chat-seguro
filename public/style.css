@@ -26,3 +26,13 @@ code {
 #chamadaAviso { background: #fff3cd; border: 1px solid #ffc107; padding: 8px; border-radius: 8px; margin: 8px 0; }
 #chamadaBarra { background: #d4edda; border: 1px solid #28a745; padding: 8px; border-radius: 8px; margin: 8px 0; }
 .hidden { display: none !important; }
+
+.videobox { display: flex; flex-direction: column; }
+.videobox span { font-size: .8em; color: #555; margin-bottom: 2px; }
+.videobox video {
+  width: 240px;
+  min-height: 140px;      /* fica visível mesmo quando é só áudio */
+  background: #000;
+  border-radius: 8px;
+  cursor: pointer;
+}
