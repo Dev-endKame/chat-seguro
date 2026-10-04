@@ -104,6 +104,7 @@ const RE_CODIGO = /^[A-Za-z0-9_-]{22}$/;
 const RE_TOKEN = /^[a-f0-9]{64}$/;
 const RE_CHAVE_PUBLICA = /^[A-Za-z0-9\-_+/=]{60,140}$/;
 const RE_BASE64 = /^[A-Za-z0-9\-_+/=]+$/;
+const RE_DADOS_SINAL = /^[\s\S]{1,10000}$/; // SDP/candidatos ICE chegam como string
 const RE_CONTROLE = /[\x00-\x1f\x7f]/;
 
 function apelidoValido(a) {
@@ -121,6 +122,11 @@ function listaMembros(sala) {
     });
   }
   return lista;
+}
+
+function membroApelido(sala, memberId) {
+  const m = sala.membros.get(memberId);
+  return m ? m.apelido : 'alguém';
 }
 
 const seguro = (fn) => (...args) => { try { fn(...args); } catch { /* descarta payload malformado */ } };
@@ -338,6 +344,35 @@ io.on('connection', (socket) => {
       cifrados,
       ts: Date.now()
     });
+  }));
+
+    // ===== WEBRTC: TOQUE (avisa o alvo que está sendo chamado) =====
+  socket.on('chamada_tocar', seguro((payload) => {
+    if (!sessao) return;
+    const { para, comVideo } = (payload && typeof payload === 'object') ? payload : {};
+    const sala = salas.get(sessao.codigo);
+    if (!sala) return;
+    const alvo = sala.membros.get(para);
+    if (!alvo || !alvo.socketId) return socket.emit('erro', { motivo: 'Pessoa não está na sala.' });
+    const s = io.sockets.sockets.get(alvo.socketId);
+    if (!s) return;
+    sala.ultimaAtividade = Date.now();
+    s.emit('chamada_tocando', { de: sessao.memberId, apelido: membroApelido(sala, sessao.memberId), comVideo: !!comVideo });
+  }));
+
+  // ===== WEBRTC: SINALIZAÇÃO (offer/answer/ICE — só repassa, não entende) =====
+  socket.on('chamada_sinal', seguro((payload) => {
+    if (!sessao) return;
+    const { para, dados } = (payload && typeof payload === 'object') ? payload : {};
+    if (typeof para !== 'string' || para.length > 64) return;
+    if (typeof dados !== 'string' || !RE_DADOS_SINAL.test(dados)) return;
+    const sala = salas.get(sessao.codigo);
+    if (!sala) return;
+    const alvo = sala.membros.get(para);
+    if (!alvo || !alvo.socketId) return;
+    const s = io.sockets.sockets.get(alvo.socketId);
+    if (!s) return;
+    s.emit('chamada_sinal', { de: sessao.memberId, dados });
   }));
 
   socket.on('expulsar_membro', seguro((payload) => {
