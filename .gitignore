@@ -1,3 +1,4 @@
 # Coisas que vão ser ignoradas pelo Git e GitHub.
 
 node_modules
+.env
